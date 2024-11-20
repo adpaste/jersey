@@ -19,6 +19,7 @@ import java.util.List;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
+import javax.ws.rs.NotFoundException;
 import javax.ws.rs.core.Application;
 
 import io.micrometer.core.instrument.MeterRegistry;
@@ -41,6 +42,7 @@ import org.glassfish.jersey.micrometer.server.ObservationRequestEventListener;
 import org.glassfish.jersey.micrometer.server.resources.TestResource;
 import org.glassfish.jersey.server.ResourceConfig;
 import org.glassfish.jersey.test.JerseyTest;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import zipkin2.CheckResult;
 import zipkin2.reporter.Sender;
@@ -131,6 +133,34 @@ abstract class AbstractObservationRequestEventListenerTest extends JerseyTest {
                 .hasTag("outcome", "SUCCESS")
                 .hasTag("status", "200")
                 .hasTag("uri", "/sub-resource/sub-hello/{name}");
+        assertThat(observationRegistry.getCurrentObservation()).isNull();
+    }
+
+    @Test
+    void errorResourcesAreTimed() {
+        try {
+            target("throws-not-found-exception").request().get();
+        }
+        catch (NotFoundException ignored) {
+        }
+
+        assertThat(registry.get(METRIC_NAME)
+                       .tags(tagsFrom("/throws-not-found-exception", "404", "CLIENT_ERROR", null))
+                       .timer()
+                       .count()).isEqualTo(1);
+
+        List<FinishedSpan> finishedSpans = getFinishedSpans();
+        SpansAssert.assertThat(finishedSpans).hasSize(1);
+        FinishedSpan finishedSpan = finishedSpans.get(0);
+        System.out.println("Trace Id [" + finishedSpan.getTraceId() + "]");
+        SpanAssert.assertThat(finishedSpan)
+                .hasNameEqualTo("HTTP GET")
+                .hasTag("exception", "None")
+                .hasTag("method", "GET")
+                .hasTag("outcome", "CLIENT_ERROR")
+                .hasTag("status", "404")
+                .hasTag("uri", "/throws-not-found-exception");
+        assertThat(observationRegistry.getCurrentObservation()).isNull();
     }
 
     private static Iterable<Tag> tagsFrom(String uri, String status, String outcome, String exception) {
